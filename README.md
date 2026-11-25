@@ -38,11 +38,47 @@ jobs:
 
 | Input | Description | Required | Default |
 | :--- | :--- | :---: | :---: |
-| `version` | Version of Lantern to install (e.g. `latest`, `v0.2.2`) | No | `latest` |
+| `version` | Version of Lantern to install (e.g. `latest`, `v0.2.3`) | No | `latest` |
 | `fail-on-wildcard` | Fail the step if any service binds to `0.0.0.0` or `::` | No | `true` |
 | `ignore-ports` | Comma-separated list of ports to whitelist (e.g. `80,443`) | No | `""` |
 | `sarif-file` | Output path to save OASIS SARIF v2.1.0 security report | No | `""` |
+| `patch-file` | Output path to save unified Git remediation diff patch | No | `""` |
 | `format` | Output format for CLI stdout (`text`, `json`, `sarif`) | No | `text` |
+
+## Outputs
+
+| Output | Description |
+| :--- | :--- |
+| `has-patch` | Whether any remediation patch was generated (`"true"` or `"false"`) |
+| `patch-file` | File path to the generated unified remediation patch |
+
+---
+
+### Automated Remediation & Fix Pull Requests
+
+Lantern can automatically generate standard unified Git diff patches (`git apply` compatible) for all detected wildcard exposures, allowing CI workflows to open remediation PRs automatically:
+
+```yaml
+- name: Audit Port Exposures
+  id: lantern
+  uses: DhyaanKanoja11/lantern-action@v1
+  with:
+    fail-on-wildcard: 'false'
+    patch-file: 'lantern-fix.patch'
+
+- name: Create Autofix Pull Request
+  if: steps.lantern.outputs.has-patch == 'true'
+  uses: peter-evans/create-pull-request@v6
+  with:
+    commit-message: 'fix(security): bind Docker Compose ports to localhost'
+    title: 'fix(security): remediate wildcard port bindings'
+    body: |
+      ## Automated Security Fix by Lantern
+      Lantern detected exposed ports bound to wildcard interfaces (`0.0.0.0`) and generated this remediation patch.
+    branch: 'lantern/autofix'
+```
+
+---
 
 ### GitHub Code Scanning & SARIF Alert Ingestion
 
@@ -68,6 +104,7 @@ Upload findings directly into GitHub's **Security → Code scanning alerts** tab
 3. If an unwhitelisted service is exposed on `0.0.0.0` or `::`:
    - Emits native GitHub Actions error annotations directly on the PR view.
    - Exits with a non-zero code to fail the CI job before accidental exposures reach production.
+   - Generates unified diff patches (`lantern fix <port> --diff`) when `patch-file` is configured.
 
 ## Documentation
 

@@ -22,10 +22,22 @@ inputs:
     description: 'Output path to save OASIS SARIF v2.1.0 security report for GitHub Code Scanning'
     required: false
     default: ''
+  patch-file:
+    description: 'Output path to save unified Git remediation diff patch (e.g. "lantern-fix.patch")'
+    required: false
+    default: ''
   format:
     description: 'Output format for CLI stdout (text, json, sarif)'
     required: false
     default: 'text'
+
+outputs:
+  has-patch:
+    description: 'Whether any remediation patch was generated ("true" or "false")'
+    value: ${{ steps.scan.outputs.has-patch }}
+  patch-file:
+    description: 'Path to generated unified remediation patch file'
+    value: ${{ steps.scan.outputs.patch-file }}
 
 runs:
   using: 'composite'
@@ -59,6 +71,7 @@ runs:
         lantern version
 
     - name: Run Lantern Scan
+      id: scan
       shell: bash
       run: |
         FLAGS=""
@@ -75,6 +88,32 @@ runs:
           lantern scan --format sarif > "$SARIF_FILE" 2>/dev/null || true
           echo "SARIF report generated at $SARIF_FILE"
         fi
+
+        PATCH_FILE="${{ inputs.patch-file }}"
+        HAS_PATCH="false"
+        if [ -n "$PATCH_FILE" ]; then
+          echo "Generating automated remediation patch to $PATCH_FILE..."
+          SCAN_JSON=$(lantern scan --format json 2>/dev/null || true)
+          PORTS=$(echo "$SCAN_JSON" | grep -o '"port":[0-9]*' | grep -o '[0-9]*' | sort -u)
+          > "$PATCH_FILE"
+          for P in $PORTS; do
+            DIFF_OUT=$(lantern fix "$P" --diff 2>/dev/null || true)
+            if [ -n "$DIFF_OUT" ]; then
+              echo "$DIFF_OUT" >> "$PATCH_FILE"
+              HAS_PATCH="true"
+            fi
+          done
+          if [ "$HAS_PATCH" = "true" ]; then
+            echo "Remediation patch successfully generated at $PATCH_FILE"
+          else
+            echo "No remediable exposures found."
+            rm -f "$PATCH_FILE"
+            PATCH_FILE=""
+          fi
+        fi
+
+        echo "has-patch=$HAS_PATCH" >> "$GITHUB_OUTPUT"
+        echo "patch-file=$PATCH_FILE" >> "$GITHUB_OUTPUT"
 
         FORMAT="${{ inputs.format }}"
         if [ -n "$FORMAT" ] && [ "$FORMAT" != "text" ]; then
